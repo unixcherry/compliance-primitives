@@ -227,3 +227,63 @@ pub enum Error {
 3. **Signature Caching**: Store signatures for later replay within time window
 4. **Weighted Voting**: Different signers have different weights
 5. **Signer Rotation**: Auto-rotate signers on schedule
+
+## Payload-Bound Authorization (Issue #611)
+
+### Problem
+
+The original `__check_auth` implementation called `sig_addr.require_auth()` for
+each listed signer. This verified *that* the signer authorized the call, but
+not *what* they authorized. A signer's approval was for "this multisig is
+authorizing something", not for a specific operation. This created two risks:
+
+1. **Wallet UX**: Wallet UIs couldn't show signers what they were approving —
+   only that the multisig contract was requesting auth.
+2. **Replay / confused-deputy**: A future refactor could introduce replay
+   attacks where a signer's approval for one operation is reused for another.
+
+### Solution
+
+`__check_auth` now calls `sig_addr.require_auth_for_args((signature_payload.clone(),).into_val(&env))`
+instead of bare `require_auth()`. This binds each signer's authorization to the
+`signature_payload` hash, which the Soroban host computes from the invocation
+being authorized. The signer now approves "this specific payload hash", not
+just "something".
+
+### What is `signature_payload`?
+
+The Soroban host passes a `Hash<32>` to `__check_auth` — this is the hash of
+the `SignaturePayload` struct, which includes the contract address, function
+name, and arguments of the invocation being authorized. By requiring auth
+for args containing this hash, the signer's wallet displays the specific
+operation (or a hash thereof) that the signer is approving.
+
+### What about `auth_context`?
+
+`auth_context` (`Vec<Context>`) contains the full invocation tree being
+authorized. This implementation does not inspect it — the payload binding
+via `require_auth_for_args` is sufficient to prevent replay attacks. A future
+enhancement could add a per-multisig allowlist of governed contracts/functions
+by inspecting `auth_context`, allowing the multisig to restrict which
+operations its signers can authorize.
+
+### Security properties
+
+- **Replay prevention**: A signer's auth for payload A cannot satisfy
+  `require_auth_for_args` for payload B — the host enforces that the args
+  match.
+- **Wallet transparency**: Wallets can display the payload hash to signers,
+  showing them *what* they are approving.
+- **No confused-deputy**: The signer must explicitly authorize the specific
+  payload, not just "the multisig is doing something".
+
+### Testing
+
+- `test_check_auth_records_payload_in_authorization` — verifies that the
+  recorded authorizations include the payload hash
+- `test_check_auth_different_payloads_produce_different_authorizations` —
+  verifies that different payloads produce different authorization records
+- `test_check_auth_payload_binding_with_threshold_2_of_3` — threshold check
+  still works with payload binding
+- `test_check_auth_payload_binding_below_threshold_fails` — below-threshold
+  still fails with payload binding

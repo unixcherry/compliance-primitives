@@ -35,13 +35,15 @@ or `contracts/circuit-breaker`.
       `1 <= threshold <= signers.len()`. A new mutation path (e.g. a batch
       signer update) must re-validate this instead of trusting a stale
       threshold.
-- [ ] **`signature_payload` / `auth_context` are still unused (or, if a
-      change starts using them, that it's intentional).** The reference
-      `__check_auth` ignores both — it authorizes based purely on signer
-      identity, not on *what* is being authorized. If a change introduces
-      context-specific policy (e.g. a higher threshold for
-      `remove_signer` than for a primitive's `add_to_denylist`), verify it
-      actually inspects `auth_context` rather than adding dead parameters.
+- [ ] **`signature_payload` / `auth_context` are now used for payload binding.**
+      `__check_auth` calls `require_auth_for_args((signature_payload.clone(),).into_val(&env))`
+      for each signer, binding the signer's authorization to the specific
+      payload hash. This prevents replay attacks where a signer's approval
+      for one operation is reused for another. If a change modifies this
+      binding, verify it still prevents replay and that wallet UIs can
+      display what signers are approving. `auth_context` is still unused —
+      a future enhancement could add a per-multisig allowlist of governed
+      contracts/functions by inspecting it.
 - [ ] **No unbounded loops over `signers` or `signatures`.** Both are
       Soroban `Vec<Address>` values; a large signer set or an oversized
       `signatures` argument increases the resource cost of every

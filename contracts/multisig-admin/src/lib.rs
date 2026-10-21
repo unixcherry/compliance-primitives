@@ -133,7 +133,7 @@ use soroban_sdk::{
     auth::{Context, CustomAccountInterface},
     contract, contracterror, contractevent, contractimpl, contracttype,
     crypto::Hash,
-    Address, BytesN, Env, Vec,
+    Address, BytesN, Env, IntoVal, Vec,
 };
 
 // ---------------------------------------------------------------------------
@@ -650,9 +650,19 @@ impl CustomAccountInterface for MultisigAdmin {
     /// the stored signer set; if the count meets the threshold, authorization
     /// succeeds.
     ///
-    /// `signature_payload` and `auth_context` are provided by the host for
-    /// advanced use-cases (replay prevention, context-specific auth) but are
-    /// not required for this reference implementation.
+    /// Each signer's authorization is explicitly bound to the
+    /// `signature_payload` hash via `require_auth_for_args`, so that a
+    /// signer's approval for one payload cannot be replayed to satisfy a
+    /// different authorization. Wallet UIs can display the payload hash to
+    /// signers so they know *what* they are approving, not just that the
+    /// multisig is authorizing *something*.
+    ///
+    /// `auth_context` is provided by the host and contains the full
+    /// invocation tree being authorized. This implementation does not
+    /// inspect it — a future enhancement could add a per-multisig allowlist
+    /// of governed contracts/functions. See
+    /// [`DESIGN_MULTISIG_ADMIN.md`](../../DESIGN_MULTISIG_ADMIN.md) for the
+    /// design rationale.
     #[allow(unused_variables)]
     fn __check_auth(
         env: Env,
@@ -687,8 +697,11 @@ impl CustomAccountInterface for MultisigAdmin {
 
         for i in 0..signatures.len() {
             let sig_addr = signatures.get(i).unwrap();
-            // Each approving address must prove it authorized this call.
-            sig_addr.require_auth();
+            // Each approving address must prove it authorized this call,
+            // and the authorization is bound to the signature_payload so a
+            // signer's approval for one operation cannot be replayed for a
+            // different one.
+            sig_addr.require_auth_for_args((signature_payload.clone(),).into_val(&env));
 
             // Check whether this signer is in the authorized set.
             for j in 0..signers.len() {
